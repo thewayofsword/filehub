@@ -3,6 +3,9 @@
 /download/
 *.part
 
+# 手动添加的机器列表（本地状态，不入库）
+peers.json
+
 # 编译产物（本地发布用，不入库）
 /release/filehub-*.exe
 /release/filehub-darwin-*

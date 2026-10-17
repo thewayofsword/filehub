@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 //go:embed web/index.html
@@ -52,6 +55,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/info", s.handleInfo)
 	mux.HandleFunc("/api/peers", s.handlePeers)
+	mux.HandleFunc("/api/peers/add", s.handlePeerAdd)
+	mux.HandleFunc("/api/peers/remove", s.handlePeerRemove)
 	mux.HandleFunc("/api/list", s.handleList)
 	mux.HandleFunc("/api/file", s.handleFile)
 	mux.HandleFunc("/api/hash", s.handleHash)
@@ -86,6 +91,95 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.disc.Peers())
+}
+
+// handlePeerAdd manually adds a peer by IP:port. It pings the remote's
+// /api/info to confirm a FileHub instance is reachable there — the key
+// mechanism for cross-network / Tailscale scenarios where UDP broadcast
+// discovery cannot reach the other side.
+func (s *Server) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		IP   string `json:"ip"`
+		Port int    `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	req.IP = strings.TrimSpace(req.IP)
+	if req.Port == 0 {
+		req.Port = s.port
+	}
+	if net.ParseIP(req.IP) == nil {
+		http.Error(w, "IP 地址不合法", http.StatusBadRequest)
+		return
+	}
+	if req.Port < 1 || req.Port > 65535 {
+		http.Error(w, "端口不合法", http.StatusBadRequest)
+		return
+	}
+	if req.IP == primaryLocalIP() && req.Port == s.port {
+		http.Error(w, "不能添加本机", http.StatusBadRequest)
+		return
+	}
+
+	hostname, version, err := pingFileHub(req.IP, req.Port)
+	if err != nil {
+		http.Error(w, "连接失败：请确认对方 FileHub 已启动且地址可访问（"+err.Error()+"）", http.StatusBadGateway)
+		return
+	}
+	p := s.disc.AddManual(req.IP, req.Port, hostname, version)
+	writeJSON(w, p)
+}
+
+func (s *Server) handlePeerRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		IP   string `json:"ip"`
+		Port int    `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求格式错误", http.StatusBadRequest)
+		return
+	}
+	req.IP = strings.TrimSpace(req.IP)
+	if req.Port == 0 {
+		req.Port = s.port
+	}
+	if !s.disc.RemoveManual(req.IP, req.Port) {
+		http.Error(w, "未找到该手动添加的机器", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// pingFileHub probes a remote FileHub's /api/info and returns its hostname
+// and version, confirming it is a reachable FileHub instance.
+func pingFileHub(ip string, port int) (hostname, version string, err error) {
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s/api/info", net.JoinHostPort(ip, strconv.Itoa(port))))
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("状态 %s", resp.Status)
+	}
+	var info struct {
+		Hostname string `json:"hostname"`
+		Version  string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", "", err
+	}
+	return info.Hostname, info.Version, nil
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"net"
+	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -27,33 +29,41 @@ type Announce struct {
 	Version  string `json:"v"`
 }
 
-// Peer is a discovered FileHub instance.
+// Peer is a discovered or manually-added FileHub instance.
 type Peer struct {
 	Hostname string    `json:"hostname"`
 	IP       string    `json:"ip"`
 	Port     int       `json:"port"`
 	Version  string    `json:"version"`
+	Manual   bool      `json:"manual"`
 	LastSeen time.Time `json:"-"`
 }
 
-// Discovery broadcasts our presence and collects peers.
+// Discovery broadcasts our presence and collects peers. Besides UDP
+// broadcast discovery it also keeps a persistent list of manually-added
+// peers — essential for cross-network / Tailscale scenarios where broadcast
+// discovery cannot reach the other side.
 type Discovery struct {
-	mu       sync.RWMutex
-	peers    map[string]*Peer
-	conn     *net.UDPConn
-	hostname string
-	version  string
-	port     int
-	stop     chan struct{}
+	mu          sync.RWMutex
+	peers       map[string]*Peer // broadcast-discovered, keyed by IP
+	manual      map[string]*Peer // manually-added, keyed by ip:port
+	persistPath string           // JSON file backing manual peers
+	conn        *net.UDPConn
+	hostname    string
+	version     string
+	port        int
+	stop        chan struct{}
 }
 
-func NewDiscovery(hostname, version string, port int) *Discovery {
+func NewDiscovery(hostname, version string, port int, persistPath string) *Discovery {
 	return &Discovery{
-		peers:    make(map[string]*Peer),
-		hostname: hostname,
-		version:  version,
-		port:     port,
-		stop:     make(chan struct{}),
+		peers:       make(map[string]*Peer),
+		manual:      make(map[string]*Peer),
+		persistPath: persistPath,
+		hostname:    hostname,
+		version:     version,
+		port:        port,
+		stop:        make(chan struct{}),
 	}
 }
 
@@ -154,15 +164,103 @@ func (d *Discovery) cleanupLoop() {
 	}
 }
 
+// LoadManual reads the persisted manual-peer list at startup.
+func (d *Discovery) LoadManual() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.persistPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(d.persistPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var list []Peer
+	if err := json.Unmarshal(data, &list); err != nil {
+		return err
+	}
+	for i := range list {
+		p := list[i]
+		p.Manual = true
+		d.manual[peerKey(p.IP, p.Port)] = &p
+	}
+	return nil
+}
+
+// AddManual registers a manually-added peer and persists it.
+func (d *Discovery) AddManual(ip string, port int, hostname, version string) Peer {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	p := &Peer{
+		Hostname: hostname,
+		IP:       ip,
+		Port:     port,
+		Version:  version,
+		Manual:   true,
+		LastSeen: time.Now(),
+	}
+	d.manual[peerKey(ip, port)] = p
+	d.saveManualLocked()
+	return *p
+}
+
+// RemoveManual deletes a manually-added peer. Returns false if not found.
+func (d *Discovery) RemoveManual(ip string, port int) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	k := peerKey(ip, port)
+	if _, ok := d.manual[k]; !ok {
+		return false
+	}
+	delete(d.manual, k)
+	d.saveManualLocked()
+	return true
+}
+
+func (d *Discovery) saveManualLocked() {
+	if d.persistPath == "" {
+		return
+	}
+	list := make([]Peer, 0, len(d.manual))
+	for _, p := range d.manual {
+		list = append(list, *p)
+	}
+	sort.Slice(list, func(i, j int) bool { return peerKey(list[i].IP, list[i].Port) < peerKey(list[j].IP, list[j].Port) })
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(d.persistPath, data, 0o644)
+}
+
+func peerKey(ip string, port int) string {
+	return net.JoinHostPort(ip, strconv.Itoa(port))
+}
+
+// Peers returns broadcast-discovered and manual peers merged, deduplicated
+// by ip:port, and stably sorted by IP (numeric) then hostname.
 func (d *Discovery) Peers() []Peer {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	out := make([]Peer, 0, len(d.peers))
-	for _, p := range d.peers {
+	seen := make(map[string]bool)
+	out := make([]Peer, 0, len(d.peers)+len(d.manual))
+	add := func(p *Peer) {
+		k := peerKey(p.IP, p.Port)
+		if seen[k] {
+			return
+		}
+		seen[k] = true
 		out = append(out, *p)
 	}
-	// Stable ordering by IP so the machine list never jumps around.
-	// Tie-break by hostname for the (unlikely) case of equal IPs.
+	for _, p := range d.peers {
+		add(p)
+	}
+	for _, p := range d.manual {
+		add(p)
+	}
 	sort.Slice(out, func(i, j int) bool {
 		c := compareIP(out[i].IP, out[j].IP)
 		if c != 0 {

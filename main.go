@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "0.1.4"
+const Version = "0.1.5"
 
 func main() {
 	port := flag.Int("port", 36774, "HTTP 服务端口")
@@ -37,7 +37,10 @@ func main() {
 
 	hostname, _ := os.Hostname()
 
-	disc := NewDiscovery(hostname, Version, *port)
+	disc := NewDiscovery(hostname, Version, *port, filepath.Join(workdir, "peers.json"))
+	if err := disc.LoadManual(); err != nil {
+		log.Printf("加载手动机器列表失败（忽略）: %v", err)
+	}
 	if err := disc.Start(); err != nil {
 		log.Fatalf("启动发现服务失败（UDP %d）: %v", discoveryPort, err)
 	}

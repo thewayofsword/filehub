@@ -78,6 +78,17 @@
   }
   button.ctl:hover { border-color: var(--accent); }
   button.ctl.danger:hover { border-color: var(--bad); color: var(--bad); }
+  .addpeer { display: flex; gap: 6px; margin-bottom: 12px; }
+  .addpeer input {
+    flex: 1; min-width: 0; background: #0c1120; border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px;
+  }
+  .addpeer input:focus { outline: none; border-color: var(--accent); }
+  .peer .del {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    font-size: 14px; padding: 2px 6px; border-radius: 6px;
+  }
+  .peer .del:hover { color: var(--bad); background: rgba(255,93,108,.15); }
 </style>
 </head>
 <body>
@@ -90,6 +101,11 @@
   <aside>
     <div class="card">
       <h2>在线机器</h2>
+      <div class="addpeer">
+        <input id="addIP" placeholder="IP 地址（跨网填 Tailscale IP）" />
+        <input id="addPort" placeholder="36774" style="width:64px" />
+        <button id="addBtn">添加</button>
+      </div>
       <ul id="peerList"><li class="empty">搜索中…</li></ul>
     </div>
   </aside>
@@ -159,12 +175,20 @@ async function loadPeers() {
         <div><div class="name">🖥 本机</div><div class="ip">${self ? esc(self.hostname) : ''} · ${self ? esc(self.ip) : ''}</div></div>
         <span class="badge">我的文件</span>
       </li>`;
-    const items = peers.map(p => `
+    const items = peers.map(p => {
+      const badge = p.manual
+        ? `<span class="badge">手动</span>`
+        : `<span class="badge">v${esc(p.version)}</span>`;
+      const del = p.manual
+        ? `<button class="del" title="移除" onclick='event.stopPropagation();removePeer(${JSON.stringify(p.ip)}, ${p.port})'>✕</button>`
+        : '';
+      return `
       <li class="peer ${currentPeer && currentPeer.ip === p.ip ? 'active' : ''}"
           onclick='selectPeer(${JSON.stringify(p)})'>
         <div><div class="name">${esc(p.hostname)}</div><div class="ip">${esc(p.ip)} : ${p.port}</div></div>
-        <span class="badge">v${esc(p.version)}</span>
-      </li>`).join('');
+        <span style="display:flex;align-items:center;gap:6px">${badge}${del}</span>
+      </li>`;
+    }).join('');
 
     list.innerHTML = selfItem + items;
     if (peers.length === 0 && self) {
@@ -354,10 +378,49 @@ async function controlTask(action, id) {
   loadDownloads();
 }
 
+async function addPeer() {
+  const ip = $('addIP').value.trim();
+  const portRaw = $('addPort').value.trim();
+  if (!ip) return;
+  const port = portRaw ? parseInt(portRaw, 10) : 0;
+  try {
+    const r = await fetch('/api/peers/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ip, port})
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      alert('添加失败：' + msg);
+      return;
+    }
+    $('addIP').value = '';
+    $('addPort').value = '';
+    loadPeers();
+  } catch (e) {
+    alert('添加失败：网络错误');
+  }
+}
+
+async function removePeer(ip, port) {
+  try {
+    await fetch('/api/peers/remove', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ip, port})
+    });
+    loadPeers();
+  } catch (e) { /* ignore */ }
+}
+
 $('clearBtn').addEventListener('click', async () => {
   await fetch('/api/downloads/clear', {method: 'POST'});
   loadDownloads();
 });
+
+$('addBtn').addEventListener('click', addPeer);
+$('addIP').addEventListener('keydown', e => { if (e.key === 'Enter') addPeer(); });
+$('addPort').addEventListener('keydown', e => { if (e.key === 'Enter') addPeer(); });
 
 loadInfo();
 loadPeers();

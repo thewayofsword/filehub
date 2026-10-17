@@ -16,6 +16,8 @@
   未传完自动断点续传，传完校验 SHA-256，损坏会明确标红。
 - **子目录**：upload 里的子目录可点击进入浏览；下载子目录里的文件会
   在 download 下保留同样的相对路径（如 `upload/docs/a.txt` → `download/docs/a.txt`）。
+- **跨网传输**：自动发现仅限同局域网。跨网（家庭↔办公室）需配合 Tailscale
+  组网 + 手动添加机器，见 `docs/Tailscale跨网指南.md`。
 
 ## 目录结构
 
@@ -60,7 +62,9 @@ GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o release/filehub-l
 |------|------|------|
 | GET | `/` | Web UI |
 | GET | `/api/info` | 本机信息 |
-| GET | `/api/peers` | 已发现的机器 |
+| GET | `/api/peers` | 已发现的机器（含手动添加） |
+| POST | `/api/peers/add` | 手动添加机器 `{ip,port}`（跨网/Tailscale） |
+| POST | `/api/peers/remove` | 移除手动添加的机器 `{ip,port}` |
 | GET | `/api/list` | 本机共享文件列表（`?path=` 子目录） |
 | GET | `/api/file?path=` | 单文件元信息（size/mtime，即时返回） |
 | GET | `/api/hash?path=` | 单文件 SHA-256（惰性计算+缓存） |
