@@ -1,0 +1,13 @@
+# 运行时生成的目录
+/upload/
+/download/
+*.part
+
+# 编译产物（本地发布用，不入库）
+/release/filehub-*.exe
+/release/filehub-darwin-*
+/release/filehub-linux-*
+
+# 系统文件
+.DS_Store
+*.log

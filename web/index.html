@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FileHub · 局域网文件共享</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1e2740;
+    --text: #e6ebf5; --muted: #8b96ad; --accent: #4f8cff;
+    --ok: #35d07f; --bad: #ff5d6c; --warn: #ffb020;
+    --border: #2a3550;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header h1 span { color: var(--accent); }
+  #selfInfo { font-size: 13px; color: var(--muted); text-align: right; }
+  #selfInfo b { color: var(--text); }
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; padding: 16px 22px; }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; overflow: hidden;
+  }
+  .card h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  .peer {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid transparent; margin-bottom: 6px; background: var(--panel2);
+  }
+  .peer:hover { border-color: var(--accent); }
+  .peer.active { border-color: var(--accent); background: #22304f; }
+  .peer .name { font-weight: 600; font-size: 14px; }
+  .peer .ip { font-size: 12px; color: var(--muted); }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: #26314c; color: var(--muted);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr:hover td { background: var(--panel2); }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  button {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 6px 14px; cursor: pointer; font-size: 13px;
+  }
+  button:disabled { background: #33405f; color: #7c87a0; cursor: not-allowed; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .empty { color: var(--muted); text-align: center; padding: 26px 0; font-size: 13px; }
+  .progress-wrap { background: #0c1120; border-radius: 6px; height: 10px; overflow: hidden; }
+  .progress-bar { height: 100%; background: var(--accent); transition: width .3s; }
+  .progress-bar.done { background: var(--ok); }
+  .progress-bar.bad { background: var(--bad); }
+  .dl-item { margin-bottom: 14px; }
+  .dl-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+  .dl-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 10px; margin-left: 6px; }
+  .tag.ok { background: rgba(53,208,127,.18); color: var(--ok); }
+  .tag.bad { background: rgba(255,93,108,.18); color: var(--bad); }
+  .tag.run { background: rgba(79,140,255,.18); color: var(--accent); }
+  .tag.warn { background: rgba(255,176,32,.18); color: var(--warn); }
+  .tag.gray { background: #26314c; color: var(--muted); }
+  .rowbtn { display: flex; gap: 6px; justify-content: flex-end; }
+  .ctl { display: flex; gap: 6px; margin-top: 6px; }
+  button.ctl {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    padding: 4px 12px; font-size: 12px; border-radius: 6px;
+  }
+  button.ctl:hover { border-color: var(--accent); }
+  button.ctl.danger:hover { border-color: var(--bad); color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐙 FileHub <span>局域网文件共享</span></h1>
+  <div id="selfInfo">加载中…</div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="card">
+      <h2>在线机器</h2>
+      <ul id="peerList"><li class="empty">搜索中…</li></ul>
+    </div>
+  </aside>
+
+  <main>
+    <div class="card" style="margin-bottom:16px">
+      <h2 id="filesTitle">共享文件</h2>
+      <table>
+        <thead>
+          <tr><th>名称</th><th>大小</th><th>修改时间</th><th style="text-align:right">操作</th></tr>
+        </thead>
+        <tbody id="fileBody"><tr><td class="empty" colspan="4">请选择左侧的机器</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>下载任务</h2>
+      <div style="margin-bottom:12px; text-align:right">
+        <button class="ghost" id="clearBtn">清除已结束任务</button>
+      </div>
+      <div id="dlList"><div class="empty">暂无下载</div></div>
+    </div>
+  </main>
+</div>
+
+<script>
+let self = null;
+let currentPeer = null; // {ip, port, hostname} or null for self
+let currentPath = '';    // relative subdirectory path inside upload ('' = root)
+
+const $ = id => document.getElementById(id);
+
+function fmtBytes(n) {
+  if (n === 0) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  const i = Math.floor(Math.log(n) / Math.log(1024));
+  return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
+}
+function fmtTime(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString();
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+async function loadInfo() {
+  try {
+    const r = await fetch('/api/info');
+    self = await r.json();
+    $('selfInfo').innerHTML =
+      `<b>${esc(self.hostname)}</b><br>${esc(self.ip)} : ${self.port} · v${esc(self.version)}`;
+  } catch (e) { /* ignore */ }
+}
+
+async function loadPeers() {
+  try {
+    const r = await fetch('/api/peers');
+    const peers = await r.json();
+    const list = $('peerList');
+
+    const selfItem = `
+      <li class="peer ${currentPeer === null ? 'active' : ''}" onclick="selectSelf()">
+        <div><div class="name">🖥 本机</div><div class="ip">${self ? esc(self.hostname) : ''} · ${self ? esc(self.ip) : ''}</div></div>
+        <span class="badge">我的文件</span>
+      </li>`;
+    const items = peers.map(p => `
+      <li class="peer ${currentPeer && currentPeer.ip === p.ip ? 'active' : ''}"
+          onclick='selectPeer(${JSON.stringify(p)})'>
+        <div><div class="name">${esc(p.hostname)}</div><div class="ip">${esc(p.ip)} : ${p.port}</div></div>
+        <span class="badge">v${esc(p.version)}</span>
+      </li>`).join('');
+
+    list.innerHTML = selfItem + items;
+    if (peers.length === 0 && self) {
+      list.insertAdjacentHTML('beforeend',
+        '<li class="empty">未发现其他机器<br><span style="font-size:11px">确保同网段且防火墙放行 UDP/TCP 36774</span></li>');
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function selectSelf() {
+  currentPeer = null;
+  currentPath = '';
+  loadPeers();
+  loadFiles();
+}
+
+function selectPeer(p) {
+  currentPeer = p;
+  currentPath = '';
+  loadPeers();
+  loadFiles();
+}
+
+function joinPath(base, name) {
+  return base ? base + '/' + name : name;
+}
+
+function enterDir(name) {
+  currentPath = joinPath(currentPath, name);
+  loadFiles();
+}
+
+function goUp() {
+  if (!currentPath) return;
+  const parts = currentPath.split('/');
+  parts.pop();
+  currentPath = parts.join('/');
+  loadFiles();
+}
+
+async function loadFiles() {
+  const title = $('filesTitle');
+  const body = $('fileBody');
+  const isSelf = currentPeer === null;
+  const peerLabel = isSelf ? '本机' : currentPeer.hostname;
+
+  // Breadcrumb: 机器名 / 子目录...
+  let crumb = `📁 ${esc(peerLabel)}`;
+  if (currentPath) {
+    crumb += ` / ${esc(currentPath)}`;
+  }
+  title.innerHTML = crumb +
+    (currentPath
+      ? ` <button class="ghost" onclick="goUp()" style="float:right;font-size:12px">⬆ 返回上级</button>`
+      : '');
+
+  const qs = [];
+  if (!isSelf) { qs.push('peer=' + encodeURIComponent(currentPeer.ip), 'port=' + currentPeer.port); }
+  if (currentPath) { qs.push('path=' + encodeURIComponent(currentPath)); }
+  const url = '/api/files' + (qs.length ? '?' + qs.join('&') : '');
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      body.innerHTML = `<tr><td class="empty" colspan="4">无法访问该机器（${r.status}）</td></tr>`;
+      return;
+    }
+    const files = await r.json();
+    if (!files.length) {
+      body.innerHTML = '<tr><td class="empty" colspan="4">该目录为空</td></tr>';
+      return;
+    }
+    body.innerHTML = files.map(f => {
+      if (f.is_dir) {
+        return `<tr style="cursor:pointer" onclick='enterDir(${JSON.stringify(f.name)})'>
+          <td class="mono" colspan="3">📁 ${esc(f.name)}</td>
+          <td class="rowbtn"><span class="badge">进入</span></td>
+        </tr>`;
+      }
+      const relPath = joinPath(currentPath, f.name);
+      const btn = isSelf
+        ? '<span class="badge">共享中</span>'
+        : `<button onclick='startDownload(${JSON.stringify(relPath)})'>下载</button>`;
+      return `<tr>
+        <td class="mono">📄 ${esc(f.name)}</td>
+        <td>${fmtBytes(f.size)}</td>
+        <td>${fmtTime(f.mtime)}</td>
+        <td class="rowbtn">${btn}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = `<tr><td class="empty" colspan="4">请求失败</td></tr>`;
+  }
+}
+
+async function startDownload(relPath) {
+  if (!currentPeer) return;
+  try {
+    const r = await fetch('/api/download/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({peer: currentPeer.ip, port: currentPeer.port, path: relPath})
+    });
+    await r.json();
+    loadDownloads();
+  } catch (e) { /* ignore */ }
+}
+
+function statusLabel(s) {
+  switch (s) {
+    case 'queued': return '<span class="tag gray">排队中</span>';
+    case 'downloading': return '<span class="tag run">下载中</span>';
+    case 'paused': return '<span class="tag warn">已暂停</span>';
+    case 'verifying': return '<span class="tag gray">校验中</span>';
+    case 'completed': return '<span class="tag ok">✅ 完成</span>';
+    case 'exists': return '<span class="tag ok">✅ 已存在（相同文件）</span>';
+    case 'corrupt': return '<span class="tag bad">❌ 损坏</span>';
+    case 'canceled': return '<span class="tag gray">已终止</span>';
+    case 'failed': return '<span class="tag bad">❌ 失败</span>';
+    default: return `<span class="tag gray">${esc(s)}</span>`;
+  }
+}
+
+async function loadDownloads() {
+  try {
+    const r = await fetch('/api/downloads');
+    const tasks = await r.json();
+    const el = $('dlList');
+    if (!tasks.length) {
+      el.innerHTML = '<div class="empty">暂无下载</div>';
+      return;
+    }
+    el.innerHTML = tasks.map(t => {
+      // size==0 (queued, metadata not yet fetched) must show 0%, never 100%.
+      const pct = t.size > 0 ? Math.round(t.downloaded / t.size * 100) : 0;
+      const doneStates = ['completed','exists'];
+      const badStates = ['corrupt','failed'];
+      const displayPct = doneStates.includes(t.status) ? 100 : pct;
+      const doneCls = doneStates.includes(t.status) ? 'done' : badStates.includes(t.status) ? 'bad' : '';
+      const active = t.status === 'downloading' || t.status === 'queued';
+      const speed = t.speed ? fmtBytes(t.speed) + '/s' : '';
+      const meta = `${fmtBytes(t.downloaded)} / ${fmtBytes(t.size)}` + (active && speed ? ` · ${speed}` : '');
+      const ctl = controlsFor(t);
+      const pathLine = t.path && t.path !== t.name ? ` · ${esc(t.path)}` : '';
+      return `<div class="dl-item">
+        <div class="dl-top">
+          <span class="mono">📄 ${esc(t.name)} ${statusLabel(t.status)}</span>
+          <span>${displayPct}%</span>
+        </div>
+        <div class="progress-wrap"><div class="progress-bar ${doneCls}" style="width:${displayPct}%"></div></div>
+        <div class="dl-meta">${meta}${pathLine} · 来自 ${esc(t.peer)}${t.error ? ' · <span style="color:var(--bad)">' + esc(t.error) + '</span>' : ''}</div>
+        ${ctl}
+      </div>`;
+    }).join('');
+  } catch (e) { /* ignore */ }
+}
+
+function controlsFor(t) {
+  if (t.status === 'downloading') {
+    return `<div class="ctl">
+      <button class="ctl" onclick="controlTask('pause','${t.id}')">⏸ 暂停</button>
+      <button class="ctl danger" onclick="controlTask('cancel','${t.id}')">⏹ 终止</button>
+    </div>`;
+  }
+  if (t.status === 'paused') {
+    return `<div class="ctl">
+      <button class="ctl" onclick="controlTask('resume','${t.id}')">▶ 继续</button>
+      <button class="ctl danger" onclick="controlTask('cancel','${t.id}')">⏹ 终止</button>
+    </div>`;
+  }
+  if (t.status === 'queued') {
+    return `<div class="ctl">
+      <button class="ctl danger" onclick="controlTask('cancel','${t.id}')">⏹ 终止</button>
+    </div>`;
+  }
+  return '';
+}
+
+async function controlTask(action, id) {
+  try {
+    await fetch('/api/download/' + action, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id})
+    });
+  } catch (e) { /* ignore */ }
+  loadDownloads();
+}
+
+$('clearBtn').addEventListener('click', async () => {
+  await fetch('/api/downloads/clear', {method: 'POST'});
+  loadDownloads();
+});
+
+loadInfo();
+loadPeers();
+loadFiles();
+setInterval(loadPeers, 3000);
+setInterval(loadDownloads, 1000);
+</script>
+</body>
+</html>
