@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "0.1.3"
+const Version = "0.1.4"
 
 func main() {
 	port := flag.Int("port", 36774, "HTTP 服务端口")

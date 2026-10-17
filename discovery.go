@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net"
+	"sort"
 	"sync"
 	"time"
 )
@@ -159,7 +161,32 @@ func (d *Discovery) Peers() []Peer {
 	for _, p := range d.peers {
 		out = append(out, *p)
 	}
+	// Stable ordering by IP so the machine list never jumps around.
+	// Tie-break by hostname for the (unlikely) case of equal IPs.
+	sort.Slice(out, func(i, j int) bool {
+		c := compareIP(out[i].IP, out[j].IP)
+		if c != 0 {
+			return c < 0
+		}
+		return out[i].Hostname < out[j].Hostname
+	})
 	return out
+}
+
+// compareIP compares two IPv4 strings numerically, octet by octet.
+// Returns -1/0/1; invalid IPs are treated as text to stay deterministic.
+func compareIP(a, b string) int {
+	ia := net.ParseIP(a)
+	ib := net.ParseIP(b)
+	if ia == nil || ib == nil {
+		return bytes.Compare([]byte(a), []byte(b))
+	}
+	ia = ia.To4()
+	ib = ib.To4()
+	if ia == nil || ib == nil {
+		return bytes.Compare([]byte(a), []byte(b))
+	}
+	return bytes.Compare(ia, ib)
 }
 
 // broadcastAddrs returns the directed broadcast address of each up IPv4
